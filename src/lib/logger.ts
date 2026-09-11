@@ -20,20 +20,20 @@ const expandNestedErrors = winston.format((info) => {
     const value = (info as Record<string, unknown>)[key]
     if (value instanceof Error) {
       (info as Record<string, unknown>)[key] = {
+        ...value,
         name: value.name,
         message: value.message,
         stack: value.stack,
-        ...value,
       }
     } else if (value && typeof value === 'object') {
       for (const nestedKey of Object.keys(value)) {
         const nested = (value as Record<string, unknown>)[nestedKey]
         if (nested instanceof Error) {
           (value as Record<string, unknown>)[nestedKey] = {
+            ...nested,
             name: nested.name,
             message: nested.message,
             stack: nested.stack,
-            ...nested,
           }
         }
       }
