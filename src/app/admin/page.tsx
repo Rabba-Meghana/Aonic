@@ -87,10 +87,13 @@ export default function AdminPage() {
           <p className="text-red-400 mb-2">Couldn't load analytics</p>
           <p className="text-sm text-gray-500 mb-6">{error}</p>
           {error.toLowerCase().includes('forbidden') && (
-            <p className="text-xs text-gray-600">This page requires an admin account. Sign in as a member with role ADMIN.</p>
+            <div>
+              <p className="text-xs text-gray-600 mb-2">This page requires an admin account. Sign in as a member with role ADMIN.</p>
+              <Link href="/login" className="text-blue-400 underline text-sm">Sign in as a different account</Link>
+            </div>
           )}
           {error.toLowerCase().includes('unauthorized') && (
-            <Link href="/checkout" className="text-blue-400 underline text-sm">Sign in via checkout</Link>
+            <Link href="/login" className="text-blue-400 underline text-sm">Sign in</Link>
           )}
         </div>
       </div>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 
 // ── Types (match the real API responses) ───────────────────────────────────────
 interface Member {
@@ -103,6 +104,7 @@ function authHeaders(): HeadersInit {
 }
 
 export default function DashboardPage() {
+  const router = useRouter()
   const [hasToken, setHasToken] = useState<boolean | null>(null)
   const [member, setMember] = useState<Member | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
@@ -159,6 +161,11 @@ export default function DashboardPage() {
   }, [])
 
   useEffect(() => { loadAll() }, [loadAll])
+
+  const signOut = () => {
+    localStorage.removeItem('nm_token')
+    router.push('/')
+  }
 
   const completeTask = async (taskKey: string) => {
     // Optimistic update
@@ -286,7 +293,7 @@ export default function DashboardPage() {
           ))}
         </nav>
 
-        <div className="p-3 border-t border-white/5">
+        <div className="p-3 border-t border-white/5 space-y-2">
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg glass">
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-sm font-bold text-white">
               {member.firstName[0]}
@@ -297,6 +304,13 @@ export default function DashboardPage() {
             </div>
             <div className={`status-dot ${activeSub ? 'status-dot-green' : 'status-dot-amber'}`} />
           </div>
+          <button onClick={signOut}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs text-gray-500 hover:text-white hover:bg-white/5 transition-colors">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            Sign out
+          </button>
         </div>
       </aside>
 

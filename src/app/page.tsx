@@ -10,22 +10,29 @@ function CountUp({ target, suffix = '', duration = 2000 }: { target: number; suf
   const started = useRef(false)
 
   useEffect(() => {
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && !started.current) {
-        started.current = true
-        const start = Date.now()
-        const tick = () => {
-          const elapsed = Date.now() - start
-          const progress = Math.min(elapsed / duration, 1)
-          const eased = 1 - Math.pow(1 - progress, 3)
-          setCount(Math.floor(eased * target))
-          if (progress < 1) requestAnimationFrame(tick)
-        }
-        requestAnimationFrame(tick)
+    const run = () => {
+      if (started.current) return
+      started.current = true
+      const start = Date.now()
+      const tick = () => {
+        const elapsed = Date.now() - start
+        const progress = Math.min(elapsed / duration, 1)
+        const eased = 1 - Math.pow(1 - progress, 3)
+        setCount(Math.floor(eased * target))
+        if (progress < 1) requestAnimationFrame(tick)
       }
-    }, { threshold: 0.5 })
+      requestAnimationFrame(tick)
+    }
+    // Trigger on scroll-into-view, but also fall back to starting on mount
+    // shortly after — some environments (fast scrolls, automated checks,
+    // certain viewport sizes) never fire a clean intersection event, which
+    // left these stuck at 0 even though the component had mounted fine.
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) run()
+    }, { threshold: 0 })
     if (ref.current) observer.observe(ref.current)
-    return () => observer.disconnect()
+    const fallback = setTimeout(run, 1200)
+    return () => { observer.disconnect(); clearTimeout(fallback) }
   }, [target, duration])
 
   return <span ref={ref}>{count}{suffix}</span>
@@ -58,7 +65,7 @@ function Nav() {
 
         {/* Links */}
         <div className="hidden md:flex items-center gap-8">
-          {['Features', 'Pricing', 'Docs', 'Blog'].map(item => (
+          {['Features', 'Pricing'].map(item => (
             <a key={item} href={`#${item.toLowerCase()}`}
               className="text-sm text-gray-400 hover:text-white transition-colors">
               {item}
@@ -68,13 +75,13 @@ function Nav() {
 
         {/* CTAs */}
         <div className="flex items-center gap-3">
-          <Link href="/dashboard"
+          <Link href="/login"
             className="hidden md:block text-sm text-gray-400 hover:text-white transition-colors px-3 py-1.5">
             Sign in
           </Link>
-          <Link href="/products"
+          <Link href="/checkout"
             className="btn-glow text-sm font-medium px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white transition-all shadow-lg shadow-blue-500/20">
-            Start free trial
+            Get started
           </Link>
         </div>
       </div>
@@ -122,28 +129,28 @@ function Hero() {
 
       {/* CTAs */}
       <div className="relative mt-10 flex flex-col sm:flex-row gap-4 px-6">
-        <Link href="/products"
+        <Link href="/checkout"
           className="btn-glow group flex items-center justify-center gap-2 px-8 py-4 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white font-semibold text-base transition-all shadow-2xl shadow-blue-500/30 hover:shadow-blue-500/50 hover:-translate-y-0.5">
-          Start your free trial
+          Get started
           <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
           </svg>
         </Link>
-        <Link href="/dashboard"
+        <Link href="/login"
           className="flex items-center justify-center gap-2 px-8 py-4 rounded-xl glass border border-white/10 hover:border-white/20 text-white font-medium text-base transition-all hover:-translate-y-0.5">
           <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          View live demo
+          Sign in to your dashboard
         </Link>
       </div>
 
       {/* Social proof */}
       <div className="relative mt-12 flex items-center gap-6 text-sm text-gray-500">
-        <span>No credit card required</span>
+        <span>Real Shopify checkout</span>
         <span className="w-1 h-1 rounded-full bg-gray-600" />
-        <span>14-day free trial</span>
+        <span>Real Recharge subscriptions</span>
         <span className="w-1 h-1 rounded-full bg-gray-600" />
         <span>CPRA compliant</span>
       </div>
@@ -444,6 +451,9 @@ function Pricing() {
             <span className={`text-sm ${!annual ? 'text-white' : 'text-gray-500'}`}>Monthly</span>
             <button
               onClick={() => setAnnual(!annual)}
+              role="switch"
+              aria-checked={annual}
+              aria-label={annual ? 'Switch to monthly billing' : 'Switch to annual billing'}
               className={`relative w-12 h-6 rounded-full transition-colors ${annual ? 'bg-blue-600' : 'bg-white/10'}`}>
               <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${annual ? 'translate-x-6' : ''}`} />
             </button>
@@ -467,7 +477,7 @@ function Pricing() {
                 <span className="text-5xl font-extrabold text-white">${annual ? annualPrice : monthly}</span>
                 <span className="text-gray-500 text-sm">/month</span>
               </div>
-              <Link href="/products"
+              <Link href="/checkout"
                 className={`block text-center py-3 px-4 rounded-xl font-medium text-sm transition-all ${
                   popular
                     ? 'bg-gradient-to-r from-blue-600 to-violet-600 text-white hover:from-blue-500 hover:to-violet-500 shadow-lg shadow-blue-500/20'
@@ -501,12 +511,12 @@ function Footer() {
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded bg-gradient-to-br from-blue-500 to-violet-600" />
           <span className="font-semibold text-sm">NovaMember</span>
-          <span className="text-gray-600 text-sm ml-2">© 2025</span>
+          <span className="text-gray-600 text-sm ml-2">© 2026</span>
         </div>
         <div className="flex gap-6 text-sm text-gray-500">
-          <a href="#" className="hover:text-white transition-colors">Privacy</a>
-          <a href="#" className="hover:text-white transition-colors">Terms</a>
-          <a href="#" className="hover:text-white transition-colors">Status</a>
+          <Link href="/privacy" className="hover:text-white transition-colors">Privacy</Link>
+          <Link href="/terms" className="hover:text-white transition-colors">Terms</Link>
+          <Link href="/status" className="hover:text-white transition-colors">Status</Link>
           <a href="https://github.com/Rabba-Meghana/Aonic" target="_blank" rel="noreferrer"
             className="hover:text-white transition-colors flex items-center gap-1">
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">

@@ -32,7 +32,7 @@ const PLANS = [
 
 export default function CheckoutPage() {
   const [step, setStep] = useState(0)
-  const [selectedPlan, setSelectedPlan] = useState('growth')
+  const [selectedPlan, setSelectedPlan] = useState('starter')
   const [form, setForm] = useState({
     firstName: '', lastName: '', email: '', password: '',
     company: '',
@@ -237,7 +237,7 @@ export default function CheckoutPage() {
                       I consent to NovaMember processing my personal data to provide subscription services,
                       generate engagement scores, and send service communications. I understand my rights under
                       the California Privacy Rights Act (CPRA) including the right to access, delete, and opt-out
-                      of sale of my data. <a href="#" className="text-blue-400 underline">Privacy Policy</a>
+                      of sale of my data. <a href="/privacy" className="text-blue-400 underline">Privacy Policy</a>
                     </span>
                   </label>
                   <label className="flex items-start gap-3 cursor-pointer">
@@ -261,6 +261,13 @@ export default function CheckoutPage() {
                     Continue →
                   </button>
                 </div>
+                {(!form.cpraConsent || !form.email || form.password.length < 8) && (
+                  <ul className="mt-3 space-y-1 text-xs text-amber-400/90">
+                    {!form.email && <li>• Enter your email address</li>}
+                    {form.password.length < 8 && <li>• Password must be at least 8 characters (currently {form.password.length})</li>}
+                    {!form.cpraConsent && <li>• You must accept the CPRA consent checkbox to continue</li>}
+                  </ul>
+                )}
               </div>
             )}
 
@@ -284,7 +291,8 @@ export default function CheckoutPage() {
 
                 <div className="mt-4 p-4 rounded-xl glass border border-white/10 text-xs text-gray-500">
                   You'll enter your card on Shopify's secure hosted checkout next — we never see or store it here.
-                  Your subscription is managed by Recharge and auto-renews monthly until cancelled from your dashboard.
+                  Shopify processes the payment itself; Recharge then manages the recurring billing schedule and
+                  auto-renews monthly until you cancel from your dashboard.
                 </div>
 
                 {error && (
