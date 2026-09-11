@@ -1,0 +1,40 @@
+version: '3.9'
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: novamember-postgres
+    environment:
+      POSTGRES_USER: novamember
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: novamember
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U novamember']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── App ─────────────────────────────────────────────────────────────────────
+  app:
+    build: .
+    container_name: novamember-app
+    ports:
+      - '3000:3000'
+    environment:
+      DATABASE_URL: postgresql://novamember:password@postgres:5432/novamember
+      NODE_ENV: production
+    env_file:
+      - .env.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

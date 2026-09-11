@@ -1,0 +1,551 @@
+openapi: 3.1.0
+info:
+  title: NovaMember API
+  version: 1.0.0
+  description: |
+    Shopify + Recharge membership management platform with AI-powered engagement scoring.
+    All authenticated endpoints require a Bearer JWT obtained from `/api/auth/login` or `/api/checkout`.
+  contact:
+    name: NovaMember Support
+    email: support@novamember.io
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://novamember.io
+    description: Production
+  - url: http://localhost:3000
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Authentication
+    description: Registration, login, token refresh, logout
+  - name: Checkout
+    description: Subscription creation and payment orchestration
+  - name: Subscriptions
+    description: Subscription lifecycle management
+  - name: Evals
+    description: AI engagement scoring pipeline
+  - name: Compliance
+    description: CPRA/CCPA data rights (DSAR export, deletion)
+  - name: Health
+    description: Service health checks
+  - name: Webhooks
+    description: Inbound webhook handlers (Shopify, Recharge)
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Auth ──────────────────────────────────────────────────────────────────────
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Log in with email + password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Rotate refresh token → new access + refresh pair
+      description: |
+        Exchanges a valid refresh token for a new (access, refresh) pair.
+        The old refresh token is immediately revoked. Replay detection invalidates
+        the entire token family if a rotated token is presented again.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: Tokens rotated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:        { type: string, description: 'Short-lived access JWT (15 min)' }
+                  refreshToken: { type: string, description: 'New refresh token (90 days)' }
+                  expiresIn:    { type: integer, example: 900 }
+                  tokenType:    { type: string, example: 'Bearer' }
+        '401':
+          description: Invalid, expired, or revoked refresh token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke refresh token (logout)
+      description: |
+        Adds the refresh token JTI to the Redis denylist. Access tokens remain
+        technically valid until expiry (15 min) — clients must discard them immediately.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: Logged out (always succeeds — idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+
+  /api/auth/shopify/install:
+    get:
+      tags: [Authentication]
+      summary: Start Shopify OAuth flow
+      description: |
+        Validates the shop domain, generates a CSRF nonce, stores it in the DB,
+        and redirects to Shopify's OAuth consent screen.
+      security: []
+      parameters:
+        - name: shop
+          in: query
+          required: true
+          schema: { type: string, example: 'mystore.myshopify.com' }
+      responses:
+        '302':
+          description: Redirect to Shopify OAuth
+        '400':
+          description: Invalid shop domain
+
+  /api/auth/shopify/callback:
+    get:
+      tags: [Authentication]
+      summary: Shopify OAuth callback
+      description: |
+        Validates HMAC and nonce, exchanges code for access token, registers webhooks,
+        upserts the member, and redirects to the dashboard with a JWT.
+      security: []
+      parameters:
+        - { name: code,      in: query, required: true,  schema: { type: string } }
+        - { name: hmac,      in: query, required: true,  schema: { type: string } }
+        - { name: shop,      in: query, required: true,  schema: { type: string } }
+        - { name: state,     in: query, required: true,  schema: { type: string } }
+        - { name: timestamp, in: query, required: true,  schema: { type: string } }
+      responses:
+        '302':
+          description: Redirect to /dashboard?token=...
+        '400':
+          description: HMAC invalid or nonce expired
+
+  # ── Checkout ──────────────────────────────────────────────────────────────────
+  /api/checkout:
+    post:
+      tags: [Checkout]
+      summary: Create a paid subscription
+      description: |
+        Full checkout flow:
+        1. Create Shopify customer
+        2. Create Recharge customer + subscription (idempotent)
+        3. Create NovaMember account + subscription record (atomic transaction)
+        4. Seed onboarding tasks + record CPRA consents
+        5. Return signed JWT + subscription confirmation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckoutBody' }
+      responses:
+        '201':
+          description: Account created and subscription active
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutResponse' }
+        '400':
+          description: Unknown plan ID
+        '409':
+          description: Email already registered
+        '422':
+          description: Validation error
+        '502':
+          description: Payment processor (Recharge) error
+
+  # ── Subscriptions ─────────────────────────────────────────────────────────────
+  /api/subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: List member subscriptions
+      description: Returns DB records merged with live Recharge data (status, charges).
+      responses:
+        '200':
+          description: Subscription list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscriptions:
+                    type: array
+                    items: { $ref: '#/components/schemas/Subscription' }
+                  rechargeData: { type: object }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags: [Subscriptions]
+      summary: Cancel a subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subscriptionId]
+              properties:
+                subscriptionId:    { type: string }
+                cancellationReason: { type: string }
+      responses:
+        '200':
+          description: Cancelled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Subscription not found
+
+    patch:
+      tags: [Subscriptions]
+      summary: Pause or resume a subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subscriptionId, action]
+              properties:
+                subscriptionId: { type: string }
+                action:         { type: string, enum: [pause, resume] }
+      responses:
+        '200':
+          description: Updated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/subscriptions/upgrade:
+    post:
+      tags: [Subscriptions]
+      summary: Upgrade or downgrade subscription plan
+      description: |
+        Prorates the price difference for the remaining billing period.
+        Cancels the old Recharge subscription and creates a new one atomically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subscriptionId, newPlanId]
+              properties:
+                subscriptionId: { type: string }
+                newPlanId:      { type: string, enum: [starter, growth, scale] }
+      responses:
+        '200':
+          description: Plan changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscription:   { $ref: '#/components/schemas/Subscription' }
+                  proratedAmount: { type: number }
+                  isUpgrade:      { type: boolean }
+        '400':
+          description: Already on this plan
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Subscription not found
+
+  # ── Evals ─────────────────────────────────────────────────────────────────────
+  /api/evals:
+    post:
+      tags: [Evals]
+      summary: Run AI engagement scoring pipeline (cron)
+      description: |
+        Protected by `x-cron-secret` header. Selects members due for re-score
+        (lastScoredAt null or >24h), calls Grok (grok-2-1212) for each, persists scores,
+        updates engagement tiers, and flags COLD members for at-risk outreach.
+      security:
+        - cronSecret: []
+      responses:
+        '200':
+          description: Eval run summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  evaluated:       { type: integer }
+                  tierDistribution: { type: object }
+                  tokenCost:       { type: object }
+                  durationMs:      { type: integer }
+
+    get:
+      tags: [Evals]
+      summary: Last eval run summary + tier distribution
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lastRun:   { type: object }
+                  tiers:     { type: object }
+                  coldCount: { type: integer }
+
+  # ── Compliance ────────────────────────────────────────────────────────────────
+  /api/compliance/export:
+    post:
+      tags: [Compliance]
+      summary: CPRA DSAR — export member data
+      description: Packages all member data (consents, activity, subscriptions) as JSON.
+      responses:
+        '200':
+          description: Data export
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/compliance/delete:
+    post:
+      tags: [Compliance]
+      summary: CPRA — request account deletion
+      description: Creates a deletion request; data is purged within 45 days per CPRA.
+      responses:
+        '202':
+          description: Deletion scheduled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── Health ────────────────────────────────────────────────────────────────────
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Service health check
+      security: []
+      parameters:
+        - name: verbose
+          in: query
+          schema: { type: boolean }
+          description: Include per-dependency latency
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+        '503':
+          description: Unhealthy (DB unreachable)
+
+  # ── Webhooks ──────────────────────────────────────────────────────────────────
+  /api/webhooks/recharge:
+    post:
+      tags: [Webhooks]
+      summary: Recharge webhook receiver
+      description: |
+        HMAC-verified. Handles: subscription/activated, subscription/cancelled,
+        charge/paid, charge/failed. Fully idempotent — replayed events are ignored.
+      security:
+        - rechargeHmac: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Received (always 200 to prevent Recharge retry storms)
+
+  /api/webhooks/shopify:
+    post:
+      tags: [Webhooks]
+      summary: Shopify webhook receiver
+      description: |
+        HMAC-verified. Handles: orders/paid, customers/create, customers/update,
+        products/update. Idempotent upserts for all events.
+      security:
+        - shopifyHmac: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Received
+
+# ── Components ─────────────────────────────────────────────────────────────────
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 15-minute access JWT from `/api/auth/login` or `/api/checkout`
+    cronSecret:
+      type: apiKey
+      in: header
+      name: x-cron-secret
+      description: Vercel cron secret from `CRON_SECRET` env var
+    rechargeHmac:
+      type: apiKey
+      in: header
+      name: X-Recharge-Hmac-Sha256
+    shopifyHmac:
+      type: apiKey
+      in: header
+      name: X-Shopify-Hmac-Sha256
+
+  responses:
+    Unauthorized:
+      description: Authentication required or token expired
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds until the rate limit resets
+        X-RateLimit-Limit:
+          schema: { type: integer }
+        X-RateLimit-Remaining:
+          schema: { type: integer }
+        X-RateLimit-Reset:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error:   { type: string }
+        code:    { type: string, enum: [VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, RATE_LIMITED, EXTERNAL_SERVICE_ERROR, PAYMENT_REQUIRED, INTERNAL_ERROR] }
+        details: { type: object, nullable: true }
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Access JWT (15 min)
+        refreshToken:
+          type: string
+          description: Refresh token (90 days)
+        member:
+          $ref: '#/components/schemas/MemberSummary'
+
+    MemberSummary:
+      type: object
+      properties:
+        id:        { type: string }
+        email:     { type: string, format: email }
+        firstName: { type: string }
+        lastName:  { type: string }
+        role:      { type: string, enum: [MEMBER, ADMIN] }
+
+    CheckoutBody:
+      type: object
+      required: [firstName, lastName, email, password, planId, cpraConsent]
+      properties:
+        firstName:        { type: string, minLength: 1, maxLength: 100 }
+        lastName:         { type: string, minLength: 1, maxLength: 100 }
+        email:            { type: string, format: email }
+        password:         { type: string, minLength: 8 }
+        company:          { type: string, maxLength: 200 }
+        planId:           { type: string, enum: [starter, growth, scale] }
+        cpraConsent:      { type: boolean, enum: [true], description: 'Must be true' }
+        marketingConsent: { type: boolean, default: false }
+
+    CheckoutResponse:
+      type: object
+      properties:
+        token:        { type: string }
+        refreshToken: { type: string }
+        member:       { $ref: '#/components/schemas/MemberSummary' }
+        subscription: { $ref: '#/components/schemas/Subscription' }
+        consent:
+          type: object
+          properties:
+            dataProcessing: { type: boolean }
+            marketing:      { type: boolean }
+            recordedAt:     { type: string, format: date-time }
+
+    Subscription:
+      type: object
+      properties:
+        id:                     { type: string }
+        plan:                   { type: string }
+        price:                  { type: number }
+        billingCycle:           { type: string }
+        status:                 { type: string, enum: [ACTIVE, CANCELLED, PAUSED, PAST_DUE] }
+        currentPeriodEnd:       { type: string, format: date-time }
+        rechargeSubscriptionId: { type: string, nullable: true }
+
+    HealthResponse:
+      type: object
+      properties:
+        status:    { type: string, enum: [healthy, degraded, unhealthy] }
+        timestamp: { type: string, format: date-time }
+        uptime:    { type: number }
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:    { type: string }
+              latencyMs: { type: integer }
+              error:     { type: string }

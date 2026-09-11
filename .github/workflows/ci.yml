@@ -1,0 +1,181 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ── Type checking ──────────────────────────────────────────────────────────
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  # ── Linting ────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  # ── Tests ──────────────────────────────────────────────────────────────────
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://novamember:password@localhost:5432/novamember_test
+      JWT_SECRET: test-jwt-secret-at-least-32-characters-long
+      XAI_API_KEY: test-xai-key
+      SHOPIFY_API_KEY: test-shopify-key
+      SHOPIFY_API_SECRET: test-shopify-secret
+      RECHARGE_API_KEY: test-recharge-key
+      RECHARGE_WEBHOOK_SECRET: test-webhook-secret
+      NEXTAUTH_URL: http://localhost:3000
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: novamember
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: novamember_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Apply real migrations (prisma/migrations — not db push)
+        run: npx prisma migrate deploy
+      - name: Run tests with coverage
+        run: npm test -- --coverage --ci
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+
+  # ── E2E ────────────────────────────────────────────────────────────────────
+  e2e:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: [typecheck]
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://novamember:password@localhost:5432/novamember_e2e
+      JWT_SECRET: test-jwt-secret-at-least-32-characters-long
+      XAI_API_KEY: test-xai-key
+      SHOPIFY_API_KEY: test-shopify-key
+      SHOPIFY_API_SECRET: test-shopify-secret
+      RECHARGE_API_KEY: test-recharge-key
+      RECHARGE_WEBHOOK_SECRET: test-webhook-secret
+      NEXTAUTH_URL: http://localhost:3000
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: novamember
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: novamember_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+        env:
+          CI: true
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  # ── Build ──────────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [typecheck, lint, test]
+    env:
+      NODE_ENV: production
+      # Dummy values for build — real values come from Vercel env at deploy time
+      DATABASE_URL: postgresql://novamember:password@localhost:5432/novamember
+      JWT_SECRET: build-placeholder-jwt-secret-32-chars-x
+      XAI_API_KEY: build-placeholder-xai-key
+      SHOPIFY_API_KEY: placeholder
+      SHOPIFY_API_SECRET: placeholder
+      RECHARGE_API_KEY: placeholder
+      RECHARGE_WEBHOOK_SECRET: placeholder
+      NEXTAUTH_URL: https://novamember.io
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run build
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextjs-build
+          path: .next/
+          retention-days: 7
+
+  # ── Security audit ─────────────────────────────────────────────────────────
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm audit --audit-level=high

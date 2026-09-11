@@ -1,0 +1,360 @@
+// NovaMember — Database Schema
+// Production-ready PostgreSQL schema for a Shopify + Recharge membership platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Members ────────────────────────────────────────────────────────────────
+
+model Member {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  passwordHash     String   @map("password_hash")
+  firstName        String   @map("first_name")
+  lastName         String   @map("last_name")
+  avatarUrl        String?  @map("avatar_url")
+  role             Role     @default(MEMBER)
+  status           MemberStatus @default(ACTIVE)
+
+  // Shopify integration
+  shopifyCustomerId String?  @unique @map("shopify_customer_id")
+
+  // Recharge integration
+  rechargeCustomerId String? @unique @map("recharge_customer_id")
+
+  // Engagement (AI-scored)
+  engagementScore    Float    @default(0) @map("engagement_score")
+  engagementTier     EngagementTier @default(COLD) @map("engagement_tier")
+  lastScoredAt       DateTime? @map("last_scored_at")
+
+  // Onboarding
+  onboardingCompletedAt DateTime? @map("onboarding_completed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  subscriptions    Subscription[]
+  onboardingTasks  OnboardingTask[]
+  activityEvents   ActivityEvent[]
+  consentRecords   ConsentRecord[]
+  deletionRequests DeletionRequest[]
+  webhookEvents    WebhookEvent[]
+
+  @@map("members")
+}
+
+enum Role {
+  MEMBER
+  ADMIN
+}
+
+enum MemberStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  CHURNED
+}
+
+enum EngagementTier {
+  COLD
+  WARM
+  HOT
+  CHAMPION
+}
+
+// ─── Products ───────────────────────────────────────────────────────────────
+
+model Product {
+  id               String   @id @default(cuid())
+  shopifyProductId String   @unique @map("shopify_product_id")
+  title            String
+  description      String?
+  vendor           String?
+  productType      String?  @map("product_type")
+  tags             String[]
+  imageUrl         String?  @map("image_url")
+  status           ProductStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  variants         ProductVariant[]
+  subscriptionPlans SubscriptionPlan[]
+
+  @@map("products")
+}
+
+enum ProductStatus {
+  ACTIVE
+  ARCHIVED
+  DRAFT
+}
+
+model ProductVariant {
+  id                    String   @id @default(cuid())
+  shopifyVariantId      String   @unique @map("shopify_variant_id")
+  productId             String   @map("product_id")
+  title                 String
+  sku                   String?
+  price                 Decimal  @db.Decimal(10, 2)
+  compareAtPrice        Decimal? @db.Decimal(10, 2) @map("compare_at_price")
+  inventoryQuantity     Int      @default(0) @map("inventory_quantity")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product  Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_variants")
+}
+
+// ─── Subscription Plans ─────────────────────────────────────────────────────
+
+model SubscriptionPlan {
+  id                String   @id @default(cuid())
+  rechargeId        String?  @unique @map("recharge_id")
+  productId         String   @map("product_id")
+  name              String
+  description       String?
+  price             Decimal  @db.Decimal(10, 2)
+  billingCycle      BillingCycle @map("billing_cycle")
+  intervalCount     Int      @default(1) @map("interval_count")
+  trialDays         Int      @default(0) @map("trial_days")
+  features          String[]
+  isPopular         Boolean  @default(false) @map("is_popular")
+  sortOrder         Int      @default(0) @map("sort_order")
+  isActive          Boolean  @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product       Product        @relation(fields: [productId], references: [id])
+  subscriptions Subscription[]
+
+  @@map("subscription_plans")
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+// ─── Subscriptions ──────────────────────────────────────────────────────────
+
+model Subscription {
+  id                   String   @id @default(cuid())
+  memberId             String   @map("member_id")
+  planId               String   @map("plan_id")
+  rechargeSubscriptionId String? @unique @map("recharge_subscription_id")
+  rechargeChargeId     String?  @map("recharge_charge_id")
+
+  status               SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart   DateTime @map("current_period_start")
+  currentPeriodEnd     DateTime @map("current_period_end")
+  cancelAtPeriodEnd    Boolean  @default(false) @map("cancel_at_period_end")
+  cancelledAt          DateTime? @map("cancelled_at")
+  pausedAt             DateTime? @map("paused_at")
+  resumesAt            DateTime? @map("resumes_at")
+  trialEndsAt          DateTime? @map("trial_ends_at")
+
+  // Pricing at time of subscription
+  priceAtSubscription  Decimal  @db.Decimal(10, 2) @map("price_at_subscription")
+
+  // Metadata
+  shopifyOrderId       String?  @map("shopify_order_id")
+  metadata             Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  member   Member           @relation(fields: [memberId], references: [id])
+  plan     SubscriptionPlan @relation(fields: [planId], references: [id])
+  charges  Charge[]
+
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  PAUSED
+  CANCELLED
+  EXPIRED
+}
+
+// ─── Charges ────────────────────────────────────────────────────────────────
+
+model Charge {
+  id                String   @id @default(cuid())
+  subscriptionId    String   @map("subscription_id")
+  rechargeChargeId  String?  @unique @map("recharge_charge_id")
+
+  amount            Decimal  @db.Decimal(10, 2)
+  currency          String   @default("USD")
+  status            ChargeStatus @default(QUEUED)
+  scheduledAt       DateTime @map("scheduled_at")
+  processedAt       DateTime? @map("processed_at")
+  failureReason     String?  @map("failure_reason")
+  retryCount        Int      @default(0) @map("retry_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@map("charges")
+}
+
+enum ChargeStatus {
+  QUEUED
+  SKIPPED
+  SUCCESS
+  ERROR
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+// ─── Onboarding ─────────────────────────────────────────────────────────────
+
+model OnboardingTask {
+  id          String   @id @default(cuid())
+  memberId    String   @map("member_id")
+  taskKey     String   @map("task_key")   // e.g. "complete_profile", "add_payment"
+  title       String
+  description String?
+  isRequired  Boolean  @default(true) @map("is_required")
+  sortOrder   Int      @default(0) @map("sort_order")
+  completedAt DateTime? @map("completed_at")
+  skippedAt   DateTime? @map("skipped_at")
+  metadata    Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@unique([memberId, taskKey])
+  @@map("onboarding_tasks")
+}
+
+// ─── Activity Events ────────────────────────────────────────────────────────
+
+model ActivityEvent {
+  id         String   @id @default(cuid())
+  memberId   String   @map("member_id")
+  eventType  String   @map("event_type")  // e.g. "login", "product_viewed", "checkout"
+  properties Json?
+  source     String?  // "web", "api", "webhook"
+  sessionId  String?  @map("session_id")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@index([memberId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("activity_events")
+}
+
+// ─── Webhook Events (Recharge + Shopify) ────────────────────────────────────
+
+model WebhookEvent {
+  id           String   @id @default(cuid())
+  source       String   // "recharge" | "shopify"
+  topic        String   // e.g. "subscription/activated"
+  externalId   String?  @map("external_id")
+  memberId     String?  @map("member_id")
+  payload      Json
+  status       WebhookStatus @default(PENDING)
+  processedAt  DateTime? @map("processed_at")
+  errorMessage String?  @map("error_message")
+  retryCount   Int      @default(0) @map("retry_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  member Member? @relation(fields: [memberId], references: [id])
+
+  @@index([source, topic])
+  @@index([status, createdAt])
+  @@map("webhook_events")
+}
+
+enum WebhookStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  SKIPPED
+}
+
+// ─── CPRA Compliance ────────────────────────────────────────────────────────
+
+model ConsentRecord {
+  id          String   @id @default(cuid())
+  memberId    String   @map("member_id")
+  consentType String   @map("consent_type")  // "marketing", "analytics", "data_processing"
+  granted     Boolean
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  version     String   // consent policy version
+  metadata    Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@index([memberId, consentType])
+  @@map("consent_records")
+}
+
+model DeletionRequest {
+  id          String   @id @default(cuid())
+  memberId    String   @map("member_id")
+  requestedAt DateTime @default(now()) @map("requested_at")
+  scheduledAt DateTime @map("scheduled_at")  // 45-day window per CPRA
+  completedAt DateTime? @map("completed_at")
+  status      DeletionStatus @default(PENDING)
+  verificationToken String @unique @map("verification_token")
+  requestorEmail    String @map("requestor_email")
+  notes       String?
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@map("deletion_requests")
+}
+
+enum DeletionStatus {
+  PENDING
+  VERIFIED
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
+// ─── AI Scoring Log ─────────────────────────────────────────────────────────
+
+model AiScoreLog {
+  id            String   @id @default(cuid())
+  memberId      String   @map("member_id")
+  score         Float
+  tier          EngagementTier
+  signals       Json     // raw signals used for scoring
+  reasoning     String?  // Claude's reasoning
+  modelVersion  String   @map("model_version")
+  promptTokens  Int      @map("prompt_tokens")
+  outputTokens  Int      @map("output_tokens")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([memberId, createdAt])
+  @@map("ai_score_logs")
+}
