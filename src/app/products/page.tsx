@@ -211,7 +211,7 @@ export default function ProductsPage() {
                       )}
 
                       <Link
-                        href={`/checkout?productId=${encodeURIComponent(product.id)}&title=${encodeURIComponent(product.title)}&price=${basePrice}`}
+                        href={`/checkout?productId=${encodeURIComponent(product.id)}&title=${encodeURIComponent(product.title)}&price=${basePrice}&purchaseType=${billingType === 'subscribe' ? 'subscription' : 'one_time'}`}
                         onClick={() => addToCart(product.id)}
                         className={`block text-center w-full py-3 px-4 rounded-xl text-sm font-semibold transition-all ${
                           inCart

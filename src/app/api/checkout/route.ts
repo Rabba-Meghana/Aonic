@@ -43,6 +43,7 @@ const CheckoutSchema = z.object({
   company:         z.string().max(200).optional(),
   planId:          z.string().min(1).optional(),
   productId:       z.string().min(1).optional(),
+  purchaseType:    z.enum(['subscription', 'one_time']).default('subscription'),
   cpraConsent:     z.literal(true, {
     errorMap: () => ({ message: 'CPRA consent is required to create an account' }),
   }),
@@ -120,7 +121,12 @@ export async function POST(req: NextRequest) {
       },
     })
     const variant = product?.variants[0]
-    const subPlan = product?.subscriptionPlans[0]
+    // Only look at a subscription plan (and thus a Recharge selling plan) for
+    // subscription purchases. A one-time purchase must NOT carry a selling
+    // plan into the Shopify checkout URL — attaching one is what turns a
+    // one-time cart line into a recurring subscription on Shopify's side,
+    // which was the actual bug: both purchase types built an identical URL.
+    const subPlan = body.purchaseType === 'subscription' ? product?.subscriptionPlans[0] : undefined
 
     if (!product || !variant) {
       return NextResponse.json({ error: `Unknown or unsynced product: ${body.productId}` }, { status: 400 })
@@ -240,6 +246,7 @@ export async function POST(req: NextRequest) {
         properties: {
           plan:          checkoutPlanId,
           checkoutSource,
+          purchaseType:  checkoutSource === 'product' ? body.purchaseType : 'subscription',
           company:       body.company ?? null,
           shopifyLinked: !!shopifyCustomerId,
         },
@@ -271,6 +278,8 @@ export async function POST(req: NextRequest) {
     memberId: member.id,
     checkoutSource,
     checkoutPlanId,
+    purchaseType: checkoutSource === 'product' ? body.purchaseType : 'subscription',
+    hasSellingPlan: !!plan.sellingPlanId,
     shopifyCustomerId,
   })
 
@@ -283,7 +292,12 @@ export async function POST(req: NextRequest) {
       lastName:  member.lastName,
       role:      member.role,
     },
-    plan: { id: checkoutPlanId, name: plan.name, price: plan.price },
+    plan: {
+      id: checkoutPlanId,
+      name: plan.name,
+      price: plan.price,
+      purchaseType: checkoutSource === 'product' ? body.purchaseType : 'subscription',
+    },
     checkoutUrl,
     subscriptionActive: false, // becomes true only after the Recharge webhook confirms payment
   }, { status: 201 })

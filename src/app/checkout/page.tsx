@@ -40,13 +40,15 @@ function CheckoutForm() {
   const productId = searchParams.get('productId')
   const catalogTitle = searchParams.get('title')
   const catalogPrice = searchParams.get('price')
+  const purchaseType = searchParams.get('purchaseType') === 'one_time' ? 'one_time' : 'subscription'
+  const isOneTime = purchaseType === 'one_time'
   const catalogMode = !!productId
 
   const catalogPlan = {
     id: productId ?? '',
     name: catalogTitle || 'Selected product',
     price: catalogPrice ? Number(catalogPrice) : 0,
-    interval: 'monthly',
+    interval: isOneTime ? 'one_time' : 'monthly',
     features: [] as string[],
   }
 
@@ -81,7 +83,7 @@ function CheckoutForm() {
           lastName:        form.lastName,
           email:           form.email,
           password:        form.password,
-          ...(catalogMode ? { productId } : { planId: selectedPlan }),
+          ...(catalogMode ? { productId, purchaseType } : { planId: selectedPlan }),
           cpraConsent:     form.cpraConsent,
           marketingConsent: form.agreeMarketing,
         }),
@@ -240,7 +242,11 @@ function CheckoutForm() {
                 <h2 className="text-2xl font-bold text-white mb-6">Create your account</h2>
                 {catalogMode && (
                   <p className="text-sm text-gray-500 mb-6">
-                    You're subscribing to <strong className="text-white">{catalogPlan.name}</strong> — ${catalogPlan.price.toFixed(2)}/month via Recharge.
+                    {isOneTime ? (
+                      <>You're buying <strong className="text-white">{catalogPlan.name}</strong> — ${catalogPlan.price.toFixed(2)}, one-time charge.</>
+                    ) : (
+                      <>You're subscribing to <strong className="text-white">{catalogPlan.name}</strong> — ${catalogPlan.price.toFixed(2)}/month via Recharge.</>
+                    )}
                   </p>
                 )}
                 <div className="grid grid-cols-2 gap-4">
@@ -315,7 +321,8 @@ function CheckoutForm() {
                 <div className="glass rounded-2xl border border-white/10 divide-y divide-white/5">
                   {[
                     { label: catalogMode ? 'Product' : 'Plan', value: plan.name },
-                    { label: 'Billing', value: `$${plan.price}/month via Recharge` },
+                    { label: 'Purchase type', value: catalogMode ? (isOneTime ? 'One-time purchase' : 'Subscription') : 'Subscription' },
+                    { label: 'Billing', value: isOneTime ? `$${plan.price.toFixed(2)} one-time charge` : `$${plan.price}/month via Recharge` },
                     { label: 'Email', value: form.email || 'Not provided' },
                     { label: 'CPRA consent', value: form.cpraConsent ? '✓ Recorded' : '✗ Missing' },
                   ].map(({ label, value }) => (
@@ -327,9 +334,14 @@ function CheckoutForm() {
                 </div>
 
                 <div className="mt-4 p-4 rounded-xl glass border border-white/10 text-xs text-gray-500">
-                  You'll enter your card on Shopify's secure hosted checkout next — we never see or store it here.
-                  Shopify processes the payment itself; Recharge then manages the recurring billing schedule and
-                  auto-renews monthly until you cancel from your dashboard.
+                  {isOneTime ? (
+                    <>You'll enter your card on Shopify's secure hosted checkout next — we never see or store it here.
+                    This is a single, one-time charge — no recurring billing, and no Recharge subscription is created.</>
+                  ) : (
+                    <>You'll enter your card on Shopify's secure hosted checkout next — we never see or store it here.
+                    Shopify processes the payment itself; Recharge then manages the recurring billing schedule and
+                    auto-renews monthly until you cancel from your dashboard.</>
+                  )}
                 </div>
 
                 {error && (
@@ -353,7 +365,9 @@ function CheckoutForm() {
                         </svg>
                         Creating account...
                       </span>
-                    ) : `Continue to secure checkout · $${plan.price}/mo`}
+                    ) : isOneTime
+                      ? `Continue to secure checkout · $${plan.price.toFixed(2)} one-time`
+                      : `Continue to secure checkout · $${plan.price}/mo`}
                   </button>
                 </div>
               </div>
@@ -366,7 +380,7 @@ function CheckoutForm() {
               <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-widest mb-4">Order Summary</h3>
               <div className="mb-4">
                 <p className="font-semibold text-white">{plan.name}{catalogMode ? '' : ' Plan'}</p>
-                <p className="text-sm text-gray-500">Monthly subscription via Recharge</p>
+                <p className="text-sm text-gray-500">{isOneTime ? 'One-time purchase' : 'Monthly subscription via Recharge'}</p>
               </div>
               {plan.features.length > 0 && (
                 <div className="space-y-2 mb-4 text-sm">
