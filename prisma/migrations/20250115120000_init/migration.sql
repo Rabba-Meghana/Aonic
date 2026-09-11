@@ -1,14 +1,23 @@
 -- NovaMember — Initial Database Migration
 -- Matches the Prisma schema exactly. Run once on a fresh database.
+--
+-- IMPORTANT: enum type names below are quoted PascalCase ("Role",
+-- "MemberStatus", etc.) to match exactly what Prisma generates from
+-- schema.prisma's `enum Role { ... }` declarations. Prisma does not apply
+-- @map() to enum type names (only to table/column names), so the Postgres
+-- type name Prisma's query engine looks up is always the literal, quoted
+-- enum name from the schema — snake_case type names here would silently
+-- mismatch and produce "type ... does not exist" errors at query time even
+-- though the migration itself runs without error.
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ── Members ──────────────────────────────────────────────────────────────────
 
-CREATE TYPE member_role AS ENUM ('MEMBER', 'ADMIN');
-CREATE TYPE member_status AS ENUM ('ACTIVE', 'PAUSED', 'CANCELLED', 'CHURNED');
-CREATE TYPE engagement_tier AS ENUM ('COLD', 'WARM', 'HOT', 'CHAMPION');
+CREATE TYPE "Role" AS ENUM ('MEMBER', 'ADMIN');
+CREATE TYPE "MemberStatus" AS ENUM ('ACTIVE', 'PAUSED', 'CANCELLED', 'CHURNED');
+CREATE TYPE "EngagementTier" AS ENUM ('COLD', 'WARM', 'HOT', 'CHAMPION');
 
 CREATE TABLE members (
   id                    VARCHAR(30)     PRIMARY KEY DEFAULT 'mem_' || encode(gen_random_bytes(12), 'hex'),
@@ -17,8 +26,8 @@ CREATE TABLE members (
   first_name            VARCHAR(100)    NOT NULL,
   last_name             VARCHAR(100)    NOT NULL,
   avatar_url            TEXT,
-  role                  member_role     NOT NULL DEFAULT 'MEMBER',
-  status                member_status   NOT NULL DEFAULT 'ACTIVE',
+  role                  "Role"          NOT NULL DEFAULT 'MEMBER',
+  status                "MemberStatus"  NOT NULL DEFAULT 'ACTIVE',
 
   -- Integrations
   shopify_customer_id   VARCHAR(100)    UNIQUE,
@@ -26,7 +35,7 @@ CREATE TABLE members (
 
   -- AI scoring
   engagement_score      DECIMAL(5,2)    NOT NULL DEFAULT 0,
-  engagement_tier       engagement_tier NOT NULL DEFAULT 'COLD',
+  engagement_tier       "EngagementTier" NOT NULL DEFAULT 'COLD',
   last_scored_at        TIMESTAMPTZ,
 
   -- Onboarding
@@ -42,7 +51,7 @@ CREATE INDEX idx_members_engagement_tier ON members(engagement_tier);
 
 -- ── Products ─────────────────────────────────────────────────────────────────
 
-CREATE TYPE product_status AS ENUM ('ACTIVE', 'ARCHIVED', 'DRAFT');
+CREATE TYPE "ProductStatus" AS ENUM ('ACTIVE', 'ARCHIVED', 'DRAFT');
 
 CREATE TABLE products (
   id                 VARCHAR(30)    PRIMARY KEY DEFAULT 'prod_' || encode(gen_random_bytes(12), 'hex'),
@@ -53,7 +62,7 @@ CREATE TABLE products (
   product_type       VARCHAR(100),
   tags               TEXT[]         NOT NULL DEFAULT '{}',
   image_url          TEXT,
-  status             product_status NOT NULL DEFAULT 'ACTIVE',
+  status             "ProductStatus" NOT NULL DEFAULT 'ACTIVE',
   created_at         TIMESTAMPTZ    NOT NULL DEFAULT NOW(),
   updated_at         TIMESTAMPTZ    NOT NULL DEFAULT NOW()
 );
@@ -73,7 +82,7 @@ CREATE TABLE product_variants (
 
 -- ── Subscription Plans ────────────────────────────────────────────────────────
 
-CREATE TYPE billing_cycle AS ENUM ('MONTHLY', 'QUARTERLY', 'ANNUAL');
+CREATE TYPE "BillingCycle" AS ENUM ('MONTHLY', 'QUARTERLY', 'ANNUAL');
 
 CREATE TABLE subscription_plans (
   id              VARCHAR(30)    PRIMARY KEY DEFAULT 'plan_' || encode(gen_random_bytes(12), 'hex'),
@@ -82,7 +91,7 @@ CREATE TABLE subscription_plans (
   name            VARCHAR(100)   NOT NULL,
   description     TEXT,
   price           DECIMAL(10,2)  NOT NULL,
-  billing_cycle   billing_cycle  NOT NULL,
+  billing_cycle   "BillingCycle" NOT NULL,
   interval_count  INTEGER        NOT NULL DEFAULT 1,
   trial_days      INTEGER        NOT NULL DEFAULT 0,
   features        TEXT[]         NOT NULL DEFAULT '{}',
@@ -95,7 +104,7 @@ CREATE TABLE subscription_plans (
 
 -- ── Subscriptions ─────────────────────────────────────────────────────────────
 
-CREATE TYPE subscription_status AS ENUM ('TRIALING', 'ACTIVE', 'PAST_DUE', 'PAUSED', 'CANCELLED', 'EXPIRED');
+CREATE TYPE "SubscriptionStatus" AS ENUM ('TRIALING', 'ACTIVE', 'PAST_DUE', 'PAUSED', 'CANCELLED', 'EXPIRED');
 
 CREATE TABLE subscriptions (
   id                         VARCHAR(30)          PRIMARY KEY DEFAULT 'sub_' || encode(gen_random_bytes(12), 'hex'),
@@ -103,7 +112,7 @@ CREATE TABLE subscriptions (
   plan_id                    VARCHAR(30)          NOT NULL REFERENCES subscription_plans(id),
   recharge_subscription_id   VARCHAR(100)         UNIQUE,
   recharge_charge_id         VARCHAR(100),
-  status                     subscription_status  NOT NULL DEFAULT 'ACTIVE',
+  status                     "SubscriptionStatus" NOT NULL DEFAULT 'ACTIVE',
   current_period_start       TIMESTAMPTZ          NOT NULL,
   current_period_end         TIMESTAMPTZ          NOT NULL,
   cancel_at_period_end       BOOLEAN              NOT NULL DEFAULT FALSE,
@@ -123,7 +132,7 @@ CREATE INDEX idx_subscriptions_status ON subscriptions(status);
 
 -- ── Charges ───────────────────────────────────────────────────────────────────
 
-CREATE TYPE charge_status AS ENUM ('QUEUED', 'SKIPPED', 'SUCCESS', 'ERROR', 'REFUNDED', 'PARTIALLY_REFUNDED');
+CREATE TYPE "ChargeStatus" AS ENUM ('QUEUED', 'SKIPPED', 'SUCCESS', 'ERROR', 'REFUNDED', 'PARTIALLY_REFUNDED');
 
 CREATE TABLE charges (
   id                    VARCHAR(30)     PRIMARY KEY DEFAULT 'chg_' || encode(gen_random_bytes(12), 'hex'),
@@ -131,7 +140,7 @@ CREATE TABLE charges (
   recharge_charge_id    VARCHAR(100)    UNIQUE,
   amount                DECIMAL(10,2)   NOT NULL,
   currency              CHAR(3)         NOT NULL DEFAULT 'USD',
-  status                charge_status   NOT NULL DEFAULT 'QUEUED',
+  status                "ChargeStatus"  NOT NULL DEFAULT 'QUEUED',
   scheduled_at          TIMESTAMPTZ     NOT NULL,
   processed_at          TIMESTAMPTZ,
   failure_reason        TEXT,
@@ -177,7 +186,7 @@ CREATE INDEX idx_activity_events_type_time ON activity_events(event_type, create
 
 -- ── Webhook Events ────────────────────────────────────────────────────────────
 
-CREATE TYPE webhook_status AS ENUM ('PENDING', 'PROCESSED', 'FAILED', 'SKIPPED');
+CREATE TYPE "WebhookStatus" AS ENUM ('PENDING', 'PROCESSED', 'FAILED', 'SKIPPED');
 
 CREATE TABLE webhook_events (
   id            VARCHAR(30)     PRIMARY KEY DEFAULT 'whe_' || encode(gen_random_bytes(12), 'hex'),
@@ -186,7 +195,7 @@ CREATE TABLE webhook_events (
   external_id   VARCHAR(100),
   member_id     VARCHAR(30)     REFERENCES members(id),
   payload       JSONB           NOT NULL,
-  status        webhook_status  NOT NULL DEFAULT 'PENDING',
+  status        "WebhookStatus" NOT NULL DEFAULT 'PENDING',
   processed_at  TIMESTAMPTZ,
   error_message TEXT,
   retry_count   INTEGER         NOT NULL DEFAULT 0,
@@ -212,7 +221,7 @@ CREATE TABLE consent_records (
 
 CREATE INDEX idx_consent_records_member_type ON consent_records(member_id, consent_type);
 
-CREATE TYPE deletion_status AS ENUM ('PENDING', 'VERIFIED', 'PROCESSING', 'COMPLETED', 'CANCELLED');
+CREATE TYPE "DeletionStatus" AS ENUM ('PENDING', 'VERIFIED', 'PROCESSING', 'COMPLETED', 'CANCELLED');
 
 CREATE TABLE deletion_requests (
   id                 VARCHAR(30)      PRIMARY KEY DEFAULT 'del_' || encode(gen_random_bytes(12), 'hex'),
@@ -220,7 +229,7 @@ CREATE TABLE deletion_requests (
   requested_at       TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
   scheduled_at       TIMESTAMPTZ      NOT NULL,  -- 45 days from request per CPRA
   completed_at       TIMESTAMPTZ,
-  status             deletion_status  NOT NULL DEFAULT 'PENDING',
+  status             "DeletionStatus" NOT NULL DEFAULT 'PENDING',
   verification_token VARCHAR(64)      NOT NULL UNIQUE,
   requestor_email    VARCHAR(255)     NOT NULL,
   notes              TEXT
@@ -229,16 +238,16 @@ CREATE TABLE deletion_requests (
 -- ── AI Score Log ──────────────────────────────────────────────────────────────
 
 CREATE TABLE ai_score_logs (
-  id             VARCHAR(30)     PRIMARY KEY DEFAULT 'asl_' || encode(gen_random_bytes(12), 'hex'),
-  member_id      VARCHAR(30)     NOT NULL REFERENCES members(id),
-  score          DECIMAL(5,2)    NOT NULL,
-  tier           engagement_tier NOT NULL,
-  signals        JSONB           NOT NULL,
+  id             VARCHAR(30)      PRIMARY KEY DEFAULT 'asl_' || encode(gen_random_bytes(12), 'hex'),
+  member_id      VARCHAR(30)      NOT NULL REFERENCES members(id),
+  score          DECIMAL(5,2)     NOT NULL,
+  tier           "EngagementTier" NOT NULL,
+  signals        JSONB            NOT NULL,
   reasoning      TEXT,
-  model_version  VARCHAR(50)     NOT NULL,
-  prompt_tokens  INTEGER         NOT NULL,
-  output_tokens  INTEGER         NOT NULL,
-  created_at     TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+  model_version  VARCHAR(50)      NOT NULL,
+  prompt_tokens  INTEGER          NOT NULL,
+  output_tokens  INTEGER          NOT NULL,
+  created_at     TIMESTAMPTZ      NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_ai_score_logs_member_time ON ai_score_logs(member_id, created_at DESC);
