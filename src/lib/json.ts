@@ -21,7 +21,7 @@ import { Prisma } from '@prisma/client'
  * or coerce it — same as it always would going into a JSON column — so only
  * pass values that are meant to be stored as plain JSON.
  */
-export function toInputJson<T extends Record<string, unknown> | unknown[]>(
+export function toInputJson<T extends object>(
   value: T
 ): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue

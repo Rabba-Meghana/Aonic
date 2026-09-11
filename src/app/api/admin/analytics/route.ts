@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
       const allDoneSoFar = requiredByMember.get(t.memberId) ?? true
       requiredByMember.set(t.memberId, allDoneSoFar && t.completedAt !== null)
     }
-    const fullyOnboardedCount = [...requiredByMember.values()].filter(Boolean).length
+    const fullyOnboardedCount = Array.from(requiredByMember.values()).filter(Boolean).length
 
     const funnel = [
       { stage: 'Signed up', count: totalMembers },
@@ -116,7 +116,7 @@ export async function GET(request: NextRequest) {
       const ltv = (existing?.ltv ?? 0) + Number(c.amount)
       ltvByMember.set(m.id, { name: `${m.firstName} ${m.lastName[0]}.`, email: m.email, ltv, score: m.engagementScore, tier: m.engagementTier })
     }
-    const topMembersByLtv = [...ltvByMember.values()].sort((a, b) => b.ltv - a.ltv).slice(0, 5)
+    const topMembersByLtv = Array.from(ltvByMember.values()).sort((a, b) => b.ltv - a.ltv).slice(0, 5)
 
     // ── Churn risk: active members already flagged COLD by the eval pipeline ─
     const churnRiskMembers = await db.member.findMany({
