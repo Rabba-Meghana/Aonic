@@ -1,9 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import Link from 'next/link'
-
-const STEPS = ['Plan', 'Account', 'Confirm']
+import { useSearchParams } from 'next/navigation'
 
 const PLANS = [
   {
@@ -30,8 +29,32 @@ const PLANS = [
   },
 ]
 
-export default function CheckoutPage() {
-  const [step, setStep] = useState(0)
+type StepKey = 'plan' | 'account' | 'confirm'
+
+function CheckoutForm() {
+  const searchParams = useSearchParams()
+
+  // Catalog mode: arrived here from /products via "Subscribe & Save" / "Add
+  // to Cart" on a specific Shopify item — checkout should reflect THAT item,
+  // not silently fall back to the unrelated platform Starter plan.
+  const productId = searchParams.get('productId')
+  const catalogTitle = searchParams.get('title')
+  const catalogPrice = searchParams.get('price')
+  const catalogMode = !!productId
+
+  const catalogPlan = {
+    id: productId ?? '',
+    name: catalogTitle || 'Selected product',
+    price: catalogPrice ? Number(catalogPrice) : 0,
+    interval: 'monthly',
+    features: [] as string[],
+  }
+
+  const STEPS: { key: StepKey; label: string }[] = catalogMode
+    ? [{ key: 'account', label: 'Account' }, { key: 'confirm', label: 'Confirm' }]
+    : [{ key: 'plan', label: 'Plan' }, { key: 'account', label: 'Account' }, { key: 'confirm', label: 'Confirm' }]
+
+  const [step, setStep] = useState<StepKey>(catalogMode ? 'account' : 'plan')
   const [selectedPlan, setSelectedPlan] = useState('starter')
   const [form, setForm] = useState({
     firstName: '', lastName: '', email: '', password: '',
@@ -43,7 +66,8 @@ export default function CheckoutPage() {
   const [redirecting, setRedirecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const plan = PLANS.find(p => p.id === selectedPlan)!
+  const plan = catalogMode ? catalogPlan : PLANS.find(p => p.id === selectedPlan)!
+  const stepIndex = STEPS.findIndex(s => s.key === step)
 
   const handleSubmit = async () => {
     setLoading(true)
@@ -57,7 +81,7 @@ export default function CheckoutPage() {
           lastName:        form.lastName,
           email:           form.email,
           password:        form.password,
-          planId:          selectedPlan,
+          ...(catalogMode ? { productId } : { planId: selectedPlan }),
           cpraConsent:     form.cpraConsent,
           marketingConsent: form.agreeMarketing,
         }),
@@ -130,26 +154,32 @@ export default function CheckoutPage() {
       </nav>
 
       <div className="max-w-6xl mx-auto px-6 py-12">
+        {catalogMode && (
+          <div className="max-w-3xl mx-auto mb-8 p-4 rounded-xl bg-blue-500/5 border border-blue-500/20 text-sm text-blue-300 text-center">
+            Checking out <strong>{catalogPlan.name}</strong> from the Shopify catalog — not a NovaMember platform plan.
+          </div>
+        )}
+
         {/* Step indicator */}
         <div className="flex items-center justify-center mb-12">
           {STEPS.map((s, i) => (
-            <div key={s} className="flex items-center">
-              <div className={`flex items-center gap-2 ${i <= step ? 'text-white' : 'text-gray-600'}`}>
+            <div key={s.key} className="flex items-center">
+              <div className={`flex items-center gap-2 ${i <= stepIndex ? 'text-white' : 'text-gray-600'}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border transition-all ${
-                  i < step ? 'bg-emerald-600 border-emerald-600 text-white' :
-                  i === step ? 'bg-blue-600 border-blue-600 text-white' :
+                  i < stepIndex ? 'bg-emerald-600 border-emerald-600 text-white' :
+                  i === stepIndex ? 'bg-blue-600 border-blue-600 text-white' :
                   'border-gray-700 text-gray-600'
                 }`}>
-                  {i < step ? (
+                  {i < stepIndex ? (
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
                   ) : i + 1}
                 </div>
-                <span className="text-sm font-medium hidden sm:block">{s}</span>
+                <span className="text-sm font-medium hidden sm:block">{s.label}</span>
               </div>
               {i < STEPS.length - 1 && (
-                <div className={`w-16 sm:w-24 h-px mx-3 ${i < step ? 'bg-emerald-600' : 'bg-gray-800'}`} />
+                <div className={`w-16 sm:w-24 h-px mx-3 ${i < stepIndex ? 'bg-emerald-600' : 'bg-gray-800'}`} />
               )}
             </div>
           ))}
@@ -158,8 +188,8 @@ export default function CheckoutPage() {
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Main */}
           <div className="lg:col-span-2">
-            {/* Step 0: Plan selection */}
-            {step === 0 && (
+            {/* Plan selection — platform plans only, skipped entirely in catalog mode */}
+            {!catalogMode && step === 'plan' && (
               <div>
                 <h2 className="text-2xl font-bold text-white mb-6">Choose your plan</h2>
                 <div className="space-y-4">
@@ -197,17 +227,22 @@ export default function CheckoutPage() {
                     </button>
                   ))}
                 </div>
-                <button onClick={() => setStep(1)}
+                <button onClick={() => setStep('account')}
                   className="mt-6 w-full py-4 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 text-white font-semibold hover:from-blue-500 hover:to-violet-500 transition-all shadow-lg shadow-blue-500/20">
                   Continue →
                 </button>
               </div>
             )}
 
-            {/* Step 1: Account */}
-            {step === 1 && (
+            {/* Account */}
+            {step === 'account' && (
               <div>
                 <h2 className="text-2xl font-bold text-white mb-6">Create your account</h2>
+                {catalogMode && (
+                  <p className="text-sm text-gray-500 mb-6">
+                    You're subscribing to <strong className="text-white">{catalogPlan.name}</strong> — ${catalogPlan.price.toFixed(2)}/month via Recharge.
+                  </p>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   {[
                     { key: 'firstName', label: 'First name', type: 'text', placeholder: 'Alex', col: 1 },
@@ -251,11 +286,13 @@ export default function CheckoutPage() {
                 </div>
 
                 <div className="flex gap-3 mt-6">
-                  <button onClick={() => setStep(0)}
-                    className="flex-1 py-3 rounded-xl glass border border-white/10 text-gray-400 font-medium hover:text-white transition-colors">
-                    Back
-                  </button>
-                  <button onClick={() => setStep(2)}
+                  {!catalogMode && (
+                    <button onClick={() => setStep('plan')}
+                      className="flex-1 py-3 rounded-xl glass border border-white/10 text-gray-400 font-medium hover:text-white transition-colors">
+                      Back
+                    </button>
+                  )}
+                  <button onClick={() => setStep('confirm')}
                     disabled={!form.cpraConsent || !form.email || form.password.length < 8}
                     className="flex-[2] py-3 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 text-white font-semibold hover:from-blue-500 hover:to-violet-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20">
                     Continue →
@@ -271,13 +308,13 @@ export default function CheckoutPage() {
               </div>
             )}
 
-            {/* Step 2: Confirm → redirects to real Shopify checkout */}
-            {step === 2 && (
+            {/* Confirm → redirects to real Shopify checkout */}
+            {step === 'confirm' && (
               <div>
                 <h2 className="text-2xl font-bold text-white mb-6">Confirm your order</h2>
                 <div className="glass rounded-2xl border border-white/10 divide-y divide-white/5">
                   {[
-                    { label: 'Plan', value: plan.name },
+                    { label: catalogMode ? 'Product' : 'Plan', value: plan.name },
                     { label: 'Billing', value: `$${plan.price}/month via Recharge` },
                     { label: 'Email', value: form.email || 'Not provided' },
                     { label: 'CPRA consent', value: form.cpraConsent ? '✓ Recorded' : '✗ Missing' },
@@ -302,7 +339,7 @@ export default function CheckoutPage() {
                 )}
 
                 <div className="flex gap-3 mt-6">
-                  <button onClick={() => setStep(1)}
+                  <button onClick={() => setStep('account')}
                     className="flex-1 py-3 rounded-xl glass border border-white/10 text-gray-400 font-medium hover:text-white transition-colors">
                     Back
                   </button>
@@ -328,23 +365,25 @@ export default function CheckoutPage() {
             <div className="glass rounded-2xl border border-white/10 p-6 sticky top-24">
               <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-widest mb-4">Order Summary</h3>
               <div className="mb-4">
-                <p className="font-semibold text-white">{plan.name} Plan</p>
+                <p className="font-semibold text-white">{plan.name}{catalogMode ? '' : ' Plan'}</p>
                 <p className="text-sm text-gray-500">Monthly subscription via Recharge</p>
               </div>
-              <div className="space-y-2 mb-4 text-sm">
-                {plan.features.map(f => (
-                  <div key={f} className="flex items-center gap-2 text-gray-400">
-                    <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    {f}
-                  </div>
-                ))}
-              </div>
+              {plan.features.length > 0 && (
+                <div className="space-y-2 mb-4 text-sm">
+                  {plan.features.map(f => (
+                    <div key={f} className="flex items-center gap-2 text-gray-400">
+                      <svg className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                      {f}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="border-t border-white/10 pt-4">
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-gray-500">Subtotal</span>
-                  <span className="text-white">${plan.price}.00</span>
+                  <span className="text-white">${plan.price.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm mb-3">
                   <span className="text-gray-500">Tax</span>
@@ -352,7 +391,7 @@ export default function CheckoutPage() {
                 </div>
                 <div className="flex justify-between font-semibold">
                   <span className="text-white">Total today</span>
-                  <span className="text-white text-lg">${plan.price}.00</span>
+                  <span className="text-white text-lg">${plan.price.toFixed(2)}</span>
                 </div>
               </div>
               <div className="mt-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400">
@@ -363,5 +402,17 @@ export default function CheckoutPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function CheckoutPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#0a0a0b] flex items-center justify-center">
+        <p className="text-sm text-gray-500">Loading checkout…</p>
+      </div>
+    }>
+      <CheckoutForm />
+    </Suspense>
   )
 }

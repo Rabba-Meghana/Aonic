@@ -28,17 +28,27 @@ import { sendWelcomeEmail } from '@/lib/email'
 import { logger } from '@/lib/logger'
 
 // ── Validation schema ─────────────────────────────────────────────────────────
+// Two ways to start a checkout:
+//  - planId: one of NovaMember's own platform plans (Starter/Growth/Scale),
+//    priced and mapped via PLAN_CONFIG below.
+//  - productId (+ variantId): a specific item from the synced Shopify catalog
+//    (/products), so the checkout actually reflects what the member clicked
+//    "Subscribe" on instead of always defaulting to the Starter platform plan.
+// Exactly one of the two must be present.
 const CheckoutSchema = z.object({
   firstName:       z.string().min(1).max(100),
   lastName:        z.string().min(1).max(100),
   email:           z.string().email(),
   password:        z.string().min(8),
   company:         z.string().max(200).optional(),
-  planId:          z.string().min(1),             // our internal plan ID
+  planId:          z.string().min(1).optional(),
+  productId:       z.string().min(1).optional(),
   cpraConsent:     z.literal(true, {
     errorMap: () => ({ message: 'CPRA consent is required to create an account' }),
   }),
   marketingConsent: z.boolean().default(false),
+}).refine(data => !!data.planId !== !!data.productId, {
+  message: 'Provide exactly one of planId (platform plan) or productId (catalog product)',
 })
 
 type CheckoutBody = z.infer<typeof CheckoutSchema>
@@ -95,14 +105,49 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  const plan = PLAN_CONFIG[body.planId]
-  if (!plan) {
-    return NextResponse.json({ error: `Unknown plan: ${body.planId}` }, { status: 400 })
+  // Resolve what's actually being purchased — either a platform plan
+  // (Starter/Growth/Scale) or a real catalog product from /products.
+  let plan: { name: string; price: number; shopifyVariantId: string; sellingPlanId?: string }
+  let checkoutSource: 'plan' | 'product'
+  let checkoutPlanId: string
+
+  if (body.productId) {
+    const product = await db.product.findUnique({
+      where: { id: body.productId },
+      include: {
+        variants: true,
+        subscriptionPlans: { where: { isActive: true }, orderBy: { sortOrder: 'asc' } },
+      },
+    })
+    const variant = product?.variants[0]
+    const subPlan = product?.subscriptionPlans[0]
+
+    if (!product || !variant) {
+      return NextResponse.json({ error: `Unknown or unsynced product: ${body.productId}` }, { status: 400 })
+    }
+
+    plan = {
+      name: product.title,
+      price: Number(subPlan?.price ?? variant.price),
+      shopifyVariantId: variant.shopifyVariantId,
+      sellingPlanId: subPlan?.rechargeId ?? undefined,
+    }
+    checkoutSource = 'product'
+    checkoutPlanId = product.id
+  } else {
+    const platformPlan = PLAN_CONFIG[body.planId!]
+    if (!platformPlan) {
+      return NextResponse.json({ error: `Unknown plan: ${body.planId}` }, { status: 400 })
+    }
+    plan = platformPlan
+    checkoutSource = 'plan'
+    checkoutPlanId = body.planId!
   }
+
   if (!plan.shopifyVariantId) {
-    logger.error('Checkout attempted with no Shopify variant configured', { planId: body.planId })
+    logger.error('Checkout attempted with no Shopify variant configured', { checkoutSource, checkoutPlanId })
     return NextResponse.json(
-      { error: 'This plan is not connected to a live Shopify product yet. Set SHOPIFY_VARIANT_* in env.' },
+      { error: 'This item is not connected to a live Shopify variant yet.' },
       { status: 503 },
     )
   }
@@ -193,7 +238,8 @@ export async function POST(req: NextRequest) {
         ipAddress: ip,
         userAgent: userAgent,
         properties: {
-          plan:          body.planId,
+          plan:          checkoutPlanId,
+          checkoutSource,
           company:       body.company ?? null,
           shopifyLinked: !!shopifyCustomerId,
         },
@@ -223,7 +269,8 @@ export async function POST(req: NextRequest) {
 
   logger.info('Checkout started — redirecting to Shopify hosted checkout', {
     memberId: member.id,
-    plan: body.planId,
+    checkoutSource,
+    checkoutPlanId,
     shopifyCustomerId,
   })
 
@@ -236,7 +283,7 @@ export async function POST(req: NextRequest) {
       lastName:  member.lastName,
       role:      member.role,
     },
-    plan: { id: body.planId, name: plan.name, price: plan.price },
+    plan: { id: checkoutPlanId, name: plan.name, price: plan.price },
     checkoutUrl,
     subscriptionActive: false, // becomes true only after the Recharge webhook confirms payment
   }, { status: 201 })
