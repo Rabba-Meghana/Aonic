@@ -226,6 +226,42 @@ export async function revokeRefreshToken(token: string): Promise<void> {
   }
 }
 
+// ── Password reset tokens ────────────────────────────────────────────────────
+//
+// Stateless: a short-lived JWT signed with the same JWT_SECRET, scoped with a
+// `purpose` claim so it can never be reused as (or accepted as) an access
+// token. No DB migration or storage required — the token itself is the proof.
+
+const PASSWORD_RESET_TTL = '30m'
+
+export interface PasswordResetPayload {
+  sub:     string   // member id
+  email:   string
+  purpose: 'password_reset'
+  iat:     number
+  exp:     number
+}
+
+export function signPasswordResetToken(memberId: string, email: string): string {
+  return jwt.sign(
+    { sub: memberId, email, purpose: 'password_reset' },
+    JWT_SECRET,
+    { expiresIn: PASSWORD_RESET_TTL },
+  )
+}
+
+/**
+ * Verifies a password reset token. Throws if invalid/expired, or if the
+ * token wasn't issued for this purpose (e.g. someone passing an access token).
+ */
+export function verifyPasswordResetToken(token: string): PasswordResetPayload {
+  const decoded = jwt.verify(token, JWT_SECRET) as PasswordResetPayload
+  if (decoded.purpose !== 'password_reset') {
+    throw new Error('Token is not a password reset token')
+  }
+  return decoded
+}
+
 // ── Request auth ─────────────────────────────────────────────────────────────
 export function getAuthFromRequest(request: Request): JwtPayload | null {
   try {

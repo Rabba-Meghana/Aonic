@@ -188,6 +188,30 @@ export async function sendAtRiskOutreach(params: {
   })
 }
 
+export async function sendPasswordResetEmail(params: {
+  to: string
+  firstName: string
+  resetUrl: string
+}): Promise<void> {
+  await sendEmail({
+    to:      params.to,
+    subject: 'Reset your NovaMember password',
+    html: `
+      <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;padding:40px 24px">
+        <h2 style="color:#111827">Reset your password</h2>
+        <p style="color:#374151">Hi ${params.firstName}, we received a request to reset your NovaMember password. This link expires in 30 minutes.</p>
+        <div style="text-align:center;margin:32px 0">
+          <a href="${params.resetUrl}" style="background:#2563eb;color:white;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">
+            Reset password →
+          </a>
+        </div>
+        <p style="color:#9ca3af;font-size:14px">If you didn't request this, you can safely ignore this email — your password won't change.</p>
+      </div>
+    `,
+    text: `Reset your NovaMember password: ${params.resetUrl} (expires in 30 minutes). If you didn't request this, ignore this email.`,
+  })
+}
+
 export async function sendSubscriptionCancelledEmail(params: {
   to: string
   firstName: string

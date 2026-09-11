@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { redis } from '@/lib/redis'
 import { logger } from '@/lib/logger'
 
 interface ServiceStatus {
@@ -18,13 +19,22 @@ interface ServiceStatus {
   error?: string
 }
 
+// Redacted view of ServiceStatus safe to show on a public status page —
+// no latency numbers, no raw error strings (which could leak upstream
+// response bodies), just the reachability verdict.
+type PublicServiceStatus = 'ok' | 'degraded' | 'down'
+
 interface HealthReport {
   status: 'healthy' | 'degraded' | 'unhealthy'
   version: string
   uptime: number
   timestamp: string
   services?: Record<string, ServiceStatus>
+  publicServices?: Record<string, PublicServiceStatus>
 }
+
+const PUBLIC_SERVICES_CACHE_KEY = 'health:public-services:v1'
+const PUBLIC_SERVICES_CACHE_TTL = 30 // seconds — avoids hammering Shopify/Recharge/Grok on every page load
 
 const START_TIME = Date.now()
 const VERSION = process.env.npm_package_version ?? '1.0.0'
@@ -104,14 +114,55 @@ async function checkGrok(): Promise<ServiceStatus> {
   }
 }
 
+/**
+ * Reachability-only status for Shopify/Recharge/Grok, safe to expose on the
+ * public status page. Cached for PUBLIC_SERVICES_CACHE_TTL seconds so a
+ * public page getting hit repeatedly doesn't turn into a load generator
+ * against three external APIs — this is the whole reason the full verbose
+ * check stays gated behind CRON_SECRET, but there's no reason the coarse
+ * ok/degraded/down verdict needs to be.
+ */
+async function getPublicServiceStatuses(): Promise<Record<string, PublicServiceStatus>> {
+  try {
+    const cached = await redis.get(PUBLIC_SERVICES_CACHE_KEY)
+    if (cached) return JSON.parse(cached) as Record<string, PublicServiceStatus>
+  } catch (err) {
+    logger.warn('Public health cache read failed', { error: String(err) })
+  }
+
+  const [recharge, shopify, grok] = await Promise.all([
+    checkRecharge(),
+    checkShopify(),
+    checkGrok(),
+  ])
+
+  const publicServices: Record<string, PublicServiceStatus> = {
+    shopify: shopify.status,
+    recharge: recharge.status,
+    grok: grok.status,
+  }
+
+  try {
+    await redis.set(PUBLIC_SERVICES_CACHE_KEY, JSON.stringify(publicServices), { ex: PUBLIC_SERVICES_CACHE_TTL })
+  } catch (err) {
+    logger.warn('Public health cache write failed', { error: String(err) })
+  }
+
+  return publicServices
+}
+
 export async function GET(req: NextRequest) {
   const verbose = req.nextUrl.searchParams.get('verbose') === 'true'
   const cronSecret = req.headers.get('x-cron-secret')
   const allowVerbose = !process.env.CRON_SECRET || cronSecret === process.env.CRON_SECRET
 
-  // Fast path — just DB check for load balancer probes
+  // Fast path — DB check plus a cached, redacted reachability summary for
+  // Shopify/Recharge/Grok, for the public status page.
   if (!verbose || !allowVerbose) {
-    const db_status = await checkDatabase()
+    const [db_status, publicServices] = await Promise.all([
+      checkDatabase(),
+      getPublicServiceStatuses(),
+    ])
     const isHealthy = db_status.status === 'ok'
 
     const report: HealthReport = {
@@ -119,6 +170,7 @@ export async function GET(req: NextRequest) {
       version:   VERSION,
       uptime:    Math.round((Date.now() - START_TIME) / 1000),
       timestamp: new Date().toISOString(),
+      publicServices,
     }
 
     return NextResponse.json(report, {

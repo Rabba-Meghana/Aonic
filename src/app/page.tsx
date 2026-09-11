@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 
 // ── Animated counter ────────────────────────────────────────────────────────
-function CountUp({ target, suffix = '', duration = 2000 }: { target: number; suffix?: string; duration?: number }) {
+function CountUp({ target, suffix = '', duration = 2000, decimals = 0 }: { target: number; suffix?: string; duration?: number; decimals?: number }) {
   const [count, setCount] = useState(0)
   const ref = useRef<HTMLSpanElement>(null)
   const started = useRef(false)
@@ -18,7 +18,10 @@ function CountUp({ target, suffix = '', duration = 2000 }: { target: number; suf
         const elapsed = Date.now() - start
         const progress = Math.min(elapsed / duration, 1)
         const eased = 1 - Math.pow(1 - progress, 3)
-        setCount(Math.floor(eased * target))
+        // decimals > 0 keeps fractional precision (e.g. 99.97%) instead of
+        // flooring to an integer, which previously made 99.97 render as "99".
+        const raw = eased * target
+        setCount(decimals > 0 ? Math.round(raw * 10 ** decimals) / 10 ** decimals : Math.floor(raw))
         if (progress < 1) requestAnimationFrame(tick)
       }
       requestAnimationFrame(tick)
@@ -33,9 +36,9 @@ function CountUp({ target, suffix = '', duration = 2000 }: { target: number; suf
     if (ref.current) observer.observe(ref.current)
     const fallback = setTimeout(run, 1200)
     return () => { observer.disconnect(); clearTimeout(fallback) }
-  }, [target, duration])
+  }, [target, duration, decimals])
 
-  return <span ref={ref}>{count}{suffix}</span>
+  return <span ref={ref}>{decimals > 0 ? count.toFixed(decimals) : count}{suffix}</span>
 }
 
 // ── Nav ─────────────────────────────────────────────────────────────────────
@@ -167,9 +170,12 @@ function Hero() {
             <div className="flex-1 mx-4 px-3 py-1 rounded-md bg-white/5 text-xs text-gray-600 text-center">
               app.novamember.io/dashboard
             </div>
+            <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap">
+              Demo data
+            </span>
           </div>
 
-          {/* Fake dashboard */}
+          {/* Sample dashboard — illustrative numbers, not a live business's real metrics */}
           <div className="p-6 grid grid-cols-4 gap-4">
             {/* Metric cards */}
             {[
@@ -240,16 +246,22 @@ function Stats() {
   return (
     <section className="relative py-24">
       <div className="max-w-7xl mx-auto px-6">
+        <div className="flex items-center justify-center gap-2 mb-10">
+          <span className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold uppercase tracking-wide">
+            Sample dashboard
+          </span>
+          <span className="text-sm text-gray-500">Illustrative figures for a mature deployment — not live business results</span>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
           {[
-            { value: 38, suffix: '%', label: 'Improvement in onboarding completion', color: 'text-blue-400' },
-            { value: 34, suffix: '%', label: 'Reduction in churn via AI scoring', color: 'text-violet-400' },
-            { value: 2.1, suffix: 'M', label: 'Subscription events processed monthly', color: 'text-emerald-400' },
-            { value: 99.97, suffix: '%', label: 'API uptime SLA', color: 'text-rose-400' },
-          ].map(({ value, suffix, label, color }) => (
+            { value: 38, suffix: '%', decimals: 0, label: 'Improvement in onboarding completion', color: 'text-blue-400' },
+            { value: 34, suffix: '%', decimals: 0, label: 'Reduction in churn via AI scoring', color: 'text-violet-400' },
+            { value: 2.1, suffix: 'M', decimals: 1, label: 'Subscription events processed monthly', color: 'text-emerald-400' },
+            { value: 99.97, suffix: '%', decimals: 2, label: 'API uptime SLA', color: 'text-rose-400' },
+          ].map(({ value, suffix, decimals, label, color }) => (
             <div key={label} className="text-center">
               <div className={`text-5xl font-extrabold ${color} mb-2`}>
-                <CountUp target={value} suffix={suffix} />
+                <CountUp target={value} suffix={suffix} decimals={decimals} />
               </div>
               <p className="text-sm text-gray-500 leading-relaxed">{label}</p>
             </div>
@@ -432,7 +444,7 @@ function Pricing() {
         'SSO / SAML',
         'SLA guarantee',
         'Dedicated CSM',
-        '99.99% uptime',
+        '99.97% uptime',
       ],
     },
   ]

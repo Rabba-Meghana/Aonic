@@ -8,6 +8,13 @@ interface HealthResponse {
   version: string
   uptime: number
   timestamp: string
+  publicServices?: Record<string, 'ok' | 'degraded' | 'down'>
+}
+
+const SERVICE_LABELS: Record<string, string> = {
+  shopify: 'Shopify',
+  recharge: 'Recharge',
+  grok: 'Grok (xAI)',
 }
 
 export default function StatusPage() {
@@ -30,7 +37,8 @@ export default function StatusPage() {
         <h1 className="text-3xl font-bold text-white mb-2">System Status</h1>
         <p className="text-sm text-gray-500 mb-8">
           This reads live from <code className="text-blue-400">/api/health</code> — a real check against
-          the production database, not a static page.
+          the production database and live reachability checks against Shopify, Recharge, and Grok,
+          not a static page.
         </p>
 
         {error && (
@@ -66,10 +74,32 @@ export default function StatusPage() {
             <p className="text-xs text-gray-600 mt-4">
               Last checked: {new Date(health.timestamp).toLocaleString()}
             </p>
-            <p className="text-xs text-gray-600 mt-2">
-              Per-service checks (Shopify, Recharge, Grok) are available via the verbose health check,
-              gated behind a cron secret for internal monitoring use.
-            </p>
+
+            {health.publicServices && (
+              <div className="mt-6 pt-4 border-t border-white/10">
+                <p className="text-xs text-gray-500 mb-3">Integration reachability</p>
+                <div className="space-y-2">
+                  {Object.entries(health.publicServices).map(([key, status]) => (
+                    <div key={key} className="flex items-center justify-between text-sm">
+                      <span className="text-gray-300">{SERVICE_LABELS[key] ?? key}</span>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        status === 'ok'
+                          ? 'bg-emerald-500/15 text-emerald-400'
+                          : status === 'degraded'
+                          ? 'bg-amber-500/15 text-amber-400'
+                          : 'bg-red-500/15 text-red-400'
+                      }`}>
+                        {status === 'ok' ? 'Reachable' : status === 'degraded' ? 'Degraded' : 'Unreachable'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-600 mt-3">
+                  Reachability only — cached for up to 30s. Full latency and error detail is gated
+                  behind a cron secret for internal monitoring use.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
