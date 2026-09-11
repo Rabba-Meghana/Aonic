@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
           passwordHash: 'oauth_shopify_no_password',   // OAuth-only account
           firstName: shopifyCustomer.first_name,
           lastName: shopifyCustomer.last_name,
-          shopifyCustomerId: shopifyCustomer.id,
+          shopifyCustomerId: String(shopifyCustomer.id),
           role: 'ADMIN',
         },
       })

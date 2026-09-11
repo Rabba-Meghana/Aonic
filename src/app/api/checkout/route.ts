@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
         firstName: body.firstName,
         lastName: body.lastName,
       })
-      shopifyCustomerId = shopifyCustomer.id
+      shopifyCustomerId = String(shopifyCustomer.id)
       logger.info('Shopify customer created', { shopifyCustomerId })
     } catch (err) {
       // Non-fatal: Shopify's own checkout will create/match the customer by
