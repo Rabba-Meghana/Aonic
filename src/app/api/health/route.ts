@@ -163,10 +163,21 @@ export async function GET(req: NextRequest) {
       checkDatabase(),
       getPublicServiceStatuses(),
     ])
-    const isHealthy = db_status.status === 'ok'
+    const dbHealthy = db_status.status === 'ok'
+    const anyIntegrationDown = Object.values(publicServices).some(s => s === 'down')
+    const anyIntegrationDegraded = Object.values(publicServices).some(s => s === 'degraded')
+
+    // The database is required — if it's down, the app itself is unhealthy.
+    // A degraded/down third-party integration doesn't take the app down, but
+    // it shouldn't be hidden behind an "Operational" badge either.
+    const status: HealthReport['status'] = !dbHealthy
+      ? 'unhealthy'
+      : (anyIntegrationDown || anyIntegrationDegraded)
+      ? 'degraded'
+      : 'healthy'
 
     const report: HealthReport = {
-      status:    isHealthy ? 'healthy' : 'unhealthy',
+      status,
       version:   VERSION,
       uptime:    Math.round((Date.now() - START_TIME) / 1000),
       timestamp: new Date().toISOString(),
@@ -174,7 +185,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json(report, {
-      status: isHealthy ? 200 : 503,
+      status: dbHealthy ? 200 : 503,
       headers: {
         'Cache-Control': 'no-store, no-cache',
         'Content-Type': 'application/json',

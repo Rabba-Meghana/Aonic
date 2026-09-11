@@ -28,7 +28,17 @@ export default function StatusPage() {
       .catch(() => setError('Could not reach the health check endpoint.'))
   }, [])
 
-  const ok = health?.status === 'healthy'
+  const badgeClass = health?.status === 'healthy'
+    ? 'bg-emerald-500/15 text-emerald-400'
+    : health?.status === 'degraded'
+    ? 'bg-amber-500/15 text-amber-400'
+    : 'bg-red-500/15 text-red-400'
+
+  const badgeLabel = health?.status === 'healthy'
+    ? 'Operational'
+    : health?.status === 'degraded'
+    ? 'Degraded'
+    : 'Unhealthy'
 
   return (
     <div className="min-h-screen bg-[#0a0a0b] px-6 py-16">
@@ -55,10 +65,8 @@ export default function StatusPage() {
           <div className="glass rounded-2xl border border-white/10 p-6">
             <div className="flex items-center justify-between mb-4">
               <span className="text-sm text-white font-medium">Overall status</span>
-              <span className={`text-xs font-medium px-2 py-1 rounded-full ${
-                ok ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'
-              }`}>
-                {ok ? 'Operational' : health.status}
+              <span className={`text-xs font-medium px-2 py-1 rounded-full ${badgeClass}`}>
+                {badgeLabel}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-4 text-sm">
